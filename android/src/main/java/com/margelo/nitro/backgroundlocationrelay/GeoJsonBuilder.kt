@@ -5,7 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 object GeoJsonBuilder {
-  private const val PLACEHOLDER = "$GEO$"
+  private const val PLACEHOLDER = RelayConstants.GEO_PLACEHOLDER
 
   fun geoJson(location: Location): JSONObject {
     return JSONObject()
