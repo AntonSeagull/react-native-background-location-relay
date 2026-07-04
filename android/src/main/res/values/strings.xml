@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="location_relay_notification_title">Location tracking active</string>
+    <string name="location_relay_notification_body">Sending location updates in the background</string>
+    <string name="location_relay_notification_channel_name">Background location</string>
+</resources>

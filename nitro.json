@@ -1,0 +1,23 @@
+{
+  "cxxNamespace": ["backgroundlocationrelay"],
+  "ios": {
+    "iosModuleName": "BackgroundLocationRelay"
+  },
+  "android": {
+    "androidNamespace": ["backgroundlocationrelay"],
+    "androidCxxLibName": "backgroundlocationrelay"
+  },
+  "autolinking": {
+    "BackgroundLocationRelay": {
+      "ios": {
+        "language": "swift",
+        "implementationClassName": "BackgroundLocationRelay"
+      },
+      "android": {
+        "language": "kotlin",
+        "implementationClassName": "BackgroundLocationRelay"
+      }
+    }
+  },
+  "ignorePaths": ["node_modules"]
+}
