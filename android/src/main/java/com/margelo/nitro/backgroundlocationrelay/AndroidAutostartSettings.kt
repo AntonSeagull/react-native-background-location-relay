@@ -6,18 +6,18 @@ import android.content.Intent
 import android.os.Build
 import java.util.Locale
 
-object AndroidManufacturerSettings {
-  fun getManufacturerLabel(): String? {
-    val manufacturer = Build.MANUFACTURER.trim()
-    return manufacturer.takeIf { it.isNotEmpty() }
-  }
-
-  fun isSettingsAvailable(context: Context): Boolean {
-    return resolveIntent(context, getCandidateIntents(context)) != null
+object AndroidAutostartSettings {
+  /** Returns true if a vendor autostart screen exists and can be opened on this device. */
+  fun isAvailable(context: Context): Boolean {
+    val vendorIntents = getVendorIntents(context)
+    if (vendorIntents.isEmpty()) {
+      return false
+    }
+    return resolveIntent(context, vendorIntents) != null
   }
 
   fun openSettings(context: Context): Boolean {
-    val intent = resolveIntent(context, getCandidateIntents(context)) ?: return false
+    val intent = resolveIntent(context, getVendorIntents(context)) ?: return false
     return ActivityIntents.start(context, intent)
   }
 
@@ -31,31 +31,28 @@ object AndroidManufacturerSettings {
     return null
   }
 
-  private fun getCandidateIntents(context: Context): List<Intent> {
+  private fun getVendorIntents(context: Context): List<Intent> {
     val manufacturer = Build.MANUFACTURER.lowercase(Locale.US)
     val brand = Build.BRAND.lowercase(Locale.US)
     val packageName = context.packageName
 
-    val manufacturerIntents =
-      when {
-        manufacturer in XIAOMI_MANUFACTURERS || brand in XIAOMI_MANUFACTURERS ->
-          xiaomiIntents(packageName)
-        manufacturer in HUAWEI_MANUFACTURERS || brand in HUAWEI_MANUFACTURERS ->
-          huaweiIntents()
-        manufacturer == "samsung" -> samsungIntents()
-        manufacturer in OPPO_MANUFACTURERS || brand in OPPO_MANUFACTURERS ->
-          oppoIntents()
-        manufacturer in VIVO_MANUFACTURERS || brand in VIVO_MANUFACTURERS ->
-          vivoIntents()
-        manufacturer == "oneplus" || brand == "oneplus" -> onePlusIntents()
-        manufacturer == "meizu" -> meizuIntents()
-        manufacturer == "asus" -> asusIntents()
-        manufacturer == "nokia" -> nokiaIntents()
-        manufacturer in LETV_MANUFACTURERS -> letvIntents()
-        else -> emptyList()
-      }
-
-    return manufacturerIntents + genericFallbackIntents(context)
+    return when {
+      manufacturer in XIAOMI_MANUFACTURERS || brand in XIAOMI_MANUFACTURERS ->
+        xiaomiIntents(packageName)
+      manufacturer in HUAWEI_MANUFACTURERS || brand in HUAWEI_MANUFACTURERS ->
+        huaweiIntents()
+      manufacturer == "samsung" -> samsungIntents()
+      manufacturer in OPPO_MANUFACTURERS || brand in OPPO_MANUFACTURERS ->
+        oppoIntents()
+      manufacturer in VIVO_MANUFACTURERS || brand in VIVO_MANUFACTURERS ->
+        vivoIntents()
+      manufacturer == "oneplus" || brand == "oneplus" -> onePlusIntents()
+      manufacturer == "meizu" -> meizuIntents()
+      manufacturer == "asus" -> asusIntents()
+      manufacturer == "nokia" -> nokiaIntents()
+      manufacturer in LETV_MANUFACTURERS -> letvIntents()
+      else -> emptyList()
+    }
   }
 
   private fun componentIntent(packageName: String, className: String): Intent {
@@ -206,14 +203,6 @@ object AndroidManufacturerSettings {
         "com.letv.android.letvsafe",
         "com.letv.android.letvsafe.AutobootManageActivity",
       ),
-    )
-  }
-
-  private fun genericFallbackIntents(context: Context): List<Intent> {
-    return listOf(
-      Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-        data = android.net.Uri.fromParts("package", context.packageName, null)
-      },
     )
   }
 

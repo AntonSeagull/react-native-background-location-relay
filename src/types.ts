@@ -30,12 +30,3 @@ export type BackgroundLocationRelayConfig = {
     bodyTemplate: string;
   };
 };
-
-export type AndroidSetupStatus = {
-  location: boolean;
-  backgroundLocation: boolean;
-  notifications: boolean;
-  batteryOptimizationIgnored: boolean;
-  manufacturer: string | null;
-  manufacturerSettingsAvailable: boolean;
-};

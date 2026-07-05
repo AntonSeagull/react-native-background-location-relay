@@ -2,17 +2,20 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Button,
-  PermissionsAndroid,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import BackgroundLocationRelay, {
-  isAndroidSetupReady,
-} from 'react-native-background-location-relay';
-import type { AndroidSetupStatus } from 'react-native-background-location-relay';
+import {
+  PERMISSIONS,
+  RESULTS,
+  openSettings,
+  request,
+  requestNotifications,
+} from 'react-native-permissions';
+import BackgroundLocationRelay from 'react-native-background-location-relay';
 
 const demoConfig = {
   location: {
@@ -37,63 +40,90 @@ const demoConfig = {
   },
 };
 
-async function requestLocationPermissions(): Promise<boolean> {
+type PermissionOutcome = {
+  granted: boolean;
+  blocked: boolean;
+  missing?: string;
+};
+
+const OK: PermissionOutcome = { granted: true, blocked: false };
+
+async function requestLocationPermissions(): Promise<PermissionOutcome> {
   if (Platform.OS === 'ios') {
-    return true;
+    // Always is required for background tracking to work and for start() to
+    // succeed. react-native-permissions upgrades an existing "When In Use"
+    // grant to "Always" when possible.
+    const status = await request(PERMISSIONS.IOS.LOCATION_ALWAYS);
+    if (status === RESULTS.GRANTED) {
+      return OK;
+    }
+    return {
+      granted: false,
+      blocked: status === RESULTS.BLOCKED,
+      missing: 'Location (Always)',
+    };
   }
 
-  const fineGranted = await PermissionsAndroid.request(
-    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-  );
-
-  if (fineGranted !== PermissionsAndroid.RESULTS.GRANTED) {
-    return false;
+  const fine = await request(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION);
+  if (fine !== RESULTS.GRANTED) {
+    return {
+      granted: false,
+      blocked: fine === RESULTS.BLOCKED,
+      missing: 'ACCESS_FINE_LOCATION',
+    };
   }
 
   if (Number(Platform.Version) >= 29) {
-    const backgroundGranted = await PermissionsAndroid.request(
-      PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION
+    const background = await request(
+      PERMISSIONS.ANDROID.ACCESS_BACKGROUND_LOCATION
     );
-    if (backgroundGranted !== PermissionsAndroid.RESULTS.GRANTED) {
-      return false;
+    if (background !== RESULTS.GRANTED) {
+      return {
+        granted: false,
+        blocked: background === RESULTS.BLOCKED,
+        missing: 'ACCESS_BACKGROUND_LOCATION',
+      };
     }
   }
 
   if (Number(Platform.Version) >= 33) {
-    const notificationsGranted = await PermissionsAndroid.request(
-      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
-    );
-    if (notificationsGranted !== PermissionsAndroid.RESULTS.GRANTED) {
-      return false;
+    const { status } = await requestNotifications(['alert']);
+    if (status !== RESULTS.GRANTED) {
+      return {
+        granted: false,
+        blocked: status === RESULTS.BLOCKED,
+        missing: 'POST_NOTIFICATIONS',
+      };
     }
   }
 
-  return true;
-}
-
-function formatSetupLine(label: string, value: boolean): string {
-  return `${label}: ${value ? 'ok' : 'missing'}`;
+  return OK;
 }
 
 export default function App() {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('Idle');
-  const [setupStatus, setSetupStatus] = useState<AndroidSetupStatus | null>(
+  const [batteryOptimized, setBatteryOptimized] = useState<boolean | null>(
     null
   );
+  const [autostartAvailable, setAutostartAvailable] = useState(false);
 
   const refreshRunningState = useCallback(async () => {
     const isRunning = await BackgroundLocationRelay.isRunning();
     setRunning(isRunning);
   }, []);
 
-  const refreshSetupStatus = useCallback(async () => {
+  const refreshAndroidStatus = useCallback(async () => {
     if (Platform.OS !== 'android') {
       return;
     }
 
-    const nextStatus = await BackgroundLocationRelay.getAndroidSetupStatus();
-    setSetupStatus(nextStatus);
+    const [ignored, autostart] = await Promise.all([
+      BackgroundLocationRelay.checkBatteryOptimization(),
+      BackgroundLocationRelay.enableAutostartSettings(),
+    ]);
+    setBatteryOptimized(ignored);
+    setAutostartAvailable(autostart);
   }, []);
 
   useEffect(() => {
@@ -102,10 +132,10 @@ export default function App() {
         error instanceof Error ? error.message : 'Failed to read status.'
       );
     });
-    refreshSetupStatus().catch(() => {
-      // Ignore setup status errors on unsupported platforms.
+    refreshAndroidStatus().catch(() => {
+      // Ignore status errors on unsupported platforms.
     });
-  }, [refreshRunningState, refreshSetupStatus]);
+  }, [refreshRunningState, refreshAndroidStatus]);
 
   const handleInitialize = async () => {
     try {
@@ -122,27 +152,39 @@ export default function App() {
 
   const handleStart = async () => {
     try {
-      const granted = await requestLocationPermissions();
-      if (!granted) {
-        setStatus('Location permission denied');
+      const outcome = await requestLocationPermissions();
+      if (!outcome.granted) {
+        const missing = outcome.missing ?? 'location';
+        setStatus(`Permission missing: ${missing}`);
         Alert.alert(
           'Permission required',
-          'Grant location permission to start tracking.'
+          outcome.blocked
+            ? `${missing} is blocked. Open settings to grant it manually.`
+            : `Grant ${missing} to start tracking.`,
+          outcome.blocked
+            ? [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Open settings',
+                  onPress: () => {
+                    openSettings().catch(() => undefined);
+                  },
+                },
+              ]
+            : undefined
         );
-        await refreshSetupStatus();
         return;
       }
 
       setStatus('Starting...');
       await BackgroundLocationRelay.start();
       await refreshRunningState();
-      await refreshSetupStatus();
+      await refreshAndroidStatus();
       setStatus('Tracking');
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Start failed.';
       setStatus(message);
       Alert.alert('Start failed', message);
-      await refreshSetupStatus();
     }
   };
 
@@ -162,29 +204,30 @@ export default function App() {
   const handleBatteryOptimization = async () => {
     try {
       const ignored =
-        await BackgroundLocationRelay.requestIgnoreBatteryOptimizations();
-      await refreshSetupStatus();
+        await BackgroundLocationRelay.requestBatteryOptimization();
+      await refreshAndroidStatus();
       if (ignored) {
         Alert.alert('Battery optimization', 'Already disabled for this app.');
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Request failed.';
+      const message =
+        error instanceof Error ? error.message : 'Request failed.';
       Alert.alert('Battery optimization', message);
     }
   };
 
-  const handleManufacturerSettings = async () => {
+  const handleAutostartSettings = async () => {
     try {
-      const opened = await BackgroundLocationRelay.openManufacturerSettings();
+      const opened = await BackgroundLocationRelay.openAutostartSettings();
       if (!opened) {
         Alert.alert(
-          'Manufacturer settings',
-          'No manufacturer-specific screen is available on this device.'
+          'Autostart settings',
+          'No vendor autostart screen is available on this device.'
         );
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Open failed.';
-      Alert.alert('Manufacturer settings', message);
+      Alert.alert('Autostart settings', message);
     }
   };
 
@@ -194,29 +237,19 @@ export default function App() {
       <Text style={styles.status}>Status: {status}</Text>
       <Text style={styles.status}>Running: {running ? 'yes' : 'no'}</Text>
 
-      {setupStatus ? (
+      {Platform.OS === 'android' ? (
         <View style={styles.setupBox}>
-          <Text style={styles.setupTitle}>Android setup</Text>
+          <Text style={styles.setupTitle}>Android reliability</Text>
           <Text style={styles.setupLine}>
-            {formatSetupLine('Location', setupStatus.location)}
+            Battery optimization off:{' '}
+            {batteryOptimized === null
+              ? 'unknown'
+              : batteryOptimized
+                ? 'yes'
+                : 'no'}
           </Text>
           <Text style={styles.setupLine}>
-            {formatSetupLine('Background', setupStatus.backgroundLocation)}
-          </Text>
-          <Text style={styles.setupLine}>
-            {formatSetupLine('Notifications', setupStatus.notifications)}
-          </Text>
-          <Text style={styles.setupLine}>
-            {formatSetupLine(
-              'Battery optimization off',
-              setupStatus.batteryOptimizationIgnored
-            )}
-          </Text>
-          <Text style={styles.setupLine}>
-            Manufacturer: {setupStatus.manufacturer ?? 'unknown'}
-          </Text>
-          <Text style={styles.setupLine}>
-            Ready: {isAndroidSetupReady(setupStatus) ? 'yes' : 'no'}
+            Autostart screen available: {autostartAvailable ? 'yes' : 'no'}
           </Text>
         </View>
       ) : null}
@@ -228,9 +261,9 @@ export default function App() {
         {Platform.OS === 'android' ? (
           <>
             <Button
-              title="Refresh setup status"
+              title="Refresh status"
               onPress={() => {
-                refreshSetupStatus().catch(() => undefined);
+                refreshAndroidStatus().catch(() => undefined);
               }}
             />
             <Button
@@ -238,8 +271,8 @@ export default function App() {
               onPress={handleBatteryOptimization}
             />
             <Button
-              title="Open manufacturer settings"
-              onPress={handleManufacturerSettings}
+              title="Open autostart settings (optional)"
+              onPress={handleAutostartSettings}
             />
           </>
         ) : null}

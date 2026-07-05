@@ -86,7 +86,8 @@ enum GeoJsonBuilder {
 
 enum RelayError: LocalizedError {
   case configurationMissing
-  case locationPermissionDenied
+  case locationPermissionMissing
+  case backgroundLocationPermissionMissing
   case invalidBodyTemplate
   case invalidEndpoint
 
@@ -94,8 +95,10 @@ enum RelayError: LocalizedError {
     switch self {
     case .configurationMissing:
       return "BackgroundLocationRelay is not configured. Call initialize() first."
-    case .locationPermissionDenied:
-      return "Location permission has not been granted."
+    case .locationPermissionMissing:
+      return "Location permission has not been granted. Request LOCATION_WHEN_IN_USE (or LOCATION_ALWAYS) via react-native-permissions before start()."
+    case .backgroundLocationPermissionMissing:
+      return "Background location permission (Always) has not been granted. Request LOCATION_ALWAYS via react-native-permissions before start()."
     case .invalidBodyTemplate:
       return "request.bodyTemplate must be valid JSON."
     case .invalidEndpoint:

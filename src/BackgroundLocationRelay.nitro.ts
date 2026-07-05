@@ -24,15 +24,6 @@ export interface BackgroundLocationRelayConfig {
   request: RequestConfig;
 }
 
-export interface AndroidSetupStatus {
-  location: boolean;
-  backgroundLocation: boolean;
-  notifications: boolean;
-  batteryOptimizationIgnored: boolean;
-  manufacturer: string | null;
-  manufacturerSettingsAvailable: boolean;
-}
-
 export interface BackgroundLocationRelay extends HybridObject<{
   ios: 'swift';
   android: 'kotlin';
@@ -41,8 +32,9 @@ export interface BackgroundLocationRelay extends HybridObject<{
   start(): Promise<void>;
   stop(): Promise<void>;
   isRunning(): Promise<boolean>;
-  getAndroidSetupStatus(): Promise<AndroidSetupStatus>;
-  requestIgnoreBatteryOptimizations(): Promise<boolean>;
+  checkBatteryOptimization(): Promise<boolean>;
+  requestBatteryOptimization(): Promise<boolean>;
   openBatteryOptimizationSettings(): Promise<void>;
-  openManufacturerSettings(): Promise<boolean>;
+  enableAutostartSettings(): Promise<boolean>;
+  openAutostartSettings(): Promise<boolean>;
 }

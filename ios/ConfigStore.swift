@@ -2,6 +2,15 @@ import Foundation
 
 enum ConfigStore {
   private static let configKey = "BackgroundLocationRelay.config"
+  private static let wasRunningKey = "BackgroundLocationRelay.wasRunning"
+
+  static func setWasRunning(_ running: Bool) {
+    UserDefaults.standard.set(running, forKey: wasRunningKey)
+  }
+
+  static func wasRunning() -> Bool {
+    UserDefaults.standard.bool(forKey: wasRunningKey)
+  }
 
   static func save(_ config: BackgroundLocationRelayConfig) {
     let payload: [String: Any] = [

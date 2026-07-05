@@ -2,6 +2,7 @@ package com.margelo.nitro.backgroundlocationrelay
 
 import java.net.HttpURLConnection
 import java.net.URL
+import org.json.JSONObject
 
 data class RelayDeliveryResult(
   val success: Boolean,
@@ -27,31 +28,67 @@ object HttpClient {
       connection.setRequestProperty("Content-Type", "application/json")
 
       if (!headersJson.isNullOrEmpty()) {
-        val headers = org.json.JSONObject(headersJson)
+        val headers = JSONObject(headersJson)
         headers.keys().forEach { key ->
           connection.setRequestProperty(key, headers.getString(key))
         }
       }
+
+      val requestHeaders = connection.requestProperties
+      RelayLogger.info("POST $endpoint")
+      RelayLogger.info("Request headers: ${formatHeaders(requestHeaders)}")
+      RelayLogger.info("Request body: $body")
 
       connection.outputStream.use { stream ->
         stream.write(body.toByteArray(Charsets.UTF_8))
       }
 
       val statusCode = connection.responseCode
+      val responseBody = readResponseBody(connection)
       connection.disconnect()
 
       val success = statusCode in 200..299
+      if (success) {
+        RelayLogger.info("Response status: $statusCode")
+        RelayLogger.info("Response body: $responseBody")
+      } else {
+        RelayLogger.error("Response status: $statusCode")
+        RelayLogger.error("Response body: $responseBody")
+      }
+
       RelayDeliveryResult(
         success = success,
         statusCode = statusCode,
         errorMessage = if (success) null else "HTTP $statusCode",
       )
     } catch (error: Exception) {
+      RelayLogger.error("Request failed: ${error.message ?: "unknown error"}")
       RelayDeliveryResult(
         success = false,
         statusCode = null,
         errorMessage = error.message ?: "Request failed.",
       )
     }
+  }
+
+  private fun readResponseBody(connection: HttpURLConnection): String {
+    val stream =
+      if (connection.responseCode in 200..299) {
+        connection.inputStream
+      } else {
+        connection.errorStream
+      }
+
+    return stream?.bufferedReader()?.use { it.readText() }?.ifEmpty { "<empty>" } ?: "<empty>"
+  }
+
+  private fun formatHeaders(headers: Map<String, List<String>>): String {
+    val json = JSONObject()
+    headers.forEach { (key, values) ->
+      if (key.isNotEmpty() && values.isNotEmpty()) {
+        json.put(key, values.joinToString(", "))
+      }
+    }
+    return json.toString()
   }
 }

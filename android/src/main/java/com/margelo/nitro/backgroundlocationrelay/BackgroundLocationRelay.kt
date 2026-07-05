@@ -21,17 +21,17 @@ class BackgroundLocationRelay : HybridBackgroundLocationRelaySpec() {
       }
       if (!AndroidPermissions.hasLocationPermission(context)) {
         throw RelayException(
-          "Location permission has not been granted. Request ACCESS_FINE_LOCATION before start().",
+          "Location permission (ACCESS_FINE_LOCATION/ACCESS_COARSE_LOCATION) has not been granted. Request it via react-native-permissions before start().",
         )
       }
       if (!AndroidPermissions.hasBackgroundLocationPermission(context)) {
         throw RelayException(
-          "Background location permission has not been granted. On Android 10+, request ACCESS_BACKGROUND_LOCATION in a separate step before start().",
+          "Background location permission (ACCESS_BACKGROUND_LOCATION) has not been granted. Request it via react-native-permissions before start().",
         )
       }
       if (!AndroidPermissions.hasNotificationPermission(context)) {
         throw RelayException(
-          "Notification permission has not been granted. On Android 13+, request POST_NOTIFICATIONS before start().",
+          "Notification permission (POST_NOTIFICATIONS) has not been granted. Request it via react-native-permissions before start().",
         )
       }
       LocationRelayForegroundService.start(context)
@@ -51,13 +51,13 @@ class BackgroundLocationRelay : HybridBackgroundLocationRelaySpec() {
     }
   }
 
-  override fun getAndroidSetupStatus(): Promise<AndroidSetupStatus> {
+  override fun checkBatteryOptimization(): Promise<Boolean> {
     return Promise.async {
-      buildAndroidSetupStatus(requireContext())
+      AndroidBatteryOptimization.isIgnoring(requireContext())
     }
   }
 
-  override fun requestIgnoreBatteryOptimizations(): Promise<Boolean> {
+  override fun requestBatteryOptimization(): Promise<Boolean> {
     return Promise.async {
       AndroidBatteryOptimization.requestExemption(requireContext())
     }
@@ -69,26 +69,16 @@ class BackgroundLocationRelay : HybridBackgroundLocationRelaySpec() {
     }
   }
 
-  override fun openManufacturerSettings(): Promise<Boolean> {
+  override fun enableAutostartSettings(): Promise<Boolean> {
     return Promise.async {
-      AndroidManufacturerSettings.openSettings(requireContext())
+      AndroidAutostartSettings.isAvailable(requireContext())
     }
   }
 
-  private fun buildAndroidSetupStatus(context: android.content.Context): AndroidSetupStatus {
-    val manufacturer =
-      AndroidManufacturerSettings.getManufacturerLabel()?.let {
-        Variant_NullType_String.create(it)
-      }
-
-    return AndroidSetupStatus(
-      location = AndroidPermissions.hasLocationPermission(context),
-      backgroundLocation = AndroidPermissions.hasBackgroundLocationPermission(context),
-      notifications = AndroidPermissions.hasNotificationPermission(context),
-      batteryOptimizationIgnored = AndroidBatteryOptimization.isIgnoring(context),
-      manufacturer = manufacturer,
-      manufacturerSettingsAvailable = AndroidManufacturerSettings.isSettingsAvailable(context),
-    )
+  override fun openAutostartSettings(): Promise<Boolean> {
+    return Promise.async {
+      AndroidAutostartSettings.openSettings(requireContext())
+    }
   }
 
   private fun requireContext() =

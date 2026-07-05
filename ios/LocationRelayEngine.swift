@@ -4,18 +4,23 @@ import Foundation
 final class LocationRelayEngine: NSObject, CLLocationManagerDelegate {
   static let shared = LocationRelayEngine()
 
+  private static let minIntervalMs: Double = 1_000
+
   private let locationManager = CLLocationManager()
   private let stateQueue = DispatchQueue(label: "BackgroundLocationRelay.engine")
+  private let deliveryQueue = DispatchQueue(label: "BackgroundLocationRelay.delivery")
 
   private var config: BackgroundLocationRelayConfig?
   private var running = false
-  private var lastDeliveryTimestamp: TimeInterval = 0
+  private var latestLocation: CLLocation?
+  private var hasDeliveredInitial = false
+  private var deliveryTimer: DispatchSourceTimer?
 
   override private init() {
     super.init()
     locationManager.delegate = self
-    locationManager.allowsBackgroundLocationUpdates = true
-    locationManager.pausesLocationUpdatesAutomatically = true
+    locationManager.allowsBackgroundLocationUpdates = false
+    locationManager.pausesLocationUpdatesAutomatically = false
     if #available(iOS 11.0, *) {
       locationManager.showsBackgroundLocationIndicator = false
     }
@@ -25,7 +30,17 @@ final class LocationRelayEngine: NSObject, CLLocationManagerDelegate {
     stateQueue.sync {
       self.config = config
       ConfigStore.save(config)
-      applyLocationSettings(config.location)
+    }
+
+    runOnMain {
+      self.applyLocationSettings(config.location)
+    }
+
+    RelayLogger.info(ConfigLogger.format(config))
+
+    if isRunning() {
+      RelayLogger.info("Relay is running — applying new configuration.")
+      startDeliveryTimer()
     }
   }
 
@@ -44,33 +59,68 @@ final class LocationRelayEngine: NSObject, CLLocationManagerDelegate {
 
     loadPersistedConfigIfNeeded()
 
-    guard config != nil else {
+    guard let currentConfig = stateQueue.sync(execute: { config }) else {
       throw RelayError.configurationMissing
     }
 
-    guard hasLocationPermission() else {
-      throw RelayError.locationPermissionDenied
+    switch locationManager.authorizationStatus {
+    case .authorizedAlways:
+      break
+    case .authorizedWhenInUse:
+      RelayLogger.error(
+        "Cannot start: background location permission (Always) is required, current status is \(Self.describeAuthorizationStatus(locationManager.authorizationStatus))."
+      )
+      throw RelayError.backgroundLocationPermissionMissing
+    default:
+      RelayLogger.error(
+        "Cannot start: location permission is \(Self.describeAuthorizationStatus(locationManager.authorizationStatus))."
+      )
+      throw RelayError.locationPermissionMissing
     }
 
     stateQueue.sync {
       running = true
+      latestLocation = nil
+      hasDeliveredInitial = false
     }
 
-    DispatchQueue.main.async {
+    ConfigStore.setWasRunning(true)
+
+    runOnMainSync {
+      self.applyLocationSettings(currentConfig.location)
       self.locationManager.startUpdatingLocation()
+      // Significant-location-change monitoring keeps the relay alive in the
+      // background and lets iOS relaunch the app after it has been terminated.
+      if Self.hasAlwaysPermission(for: self.locationManager) {
+        self.locationManager.startMonitoringSignificantLocationChanges()
+      }
+      self.locationManager.requestLocation()
     }
+
+    startDeliveryTimer()
 
     RelayLogger.info("Location relay started.")
+    RelayLogger.info(
+      "Location authorization: \(Self.describeAuthorizationStatus(locationManager.authorizationStatus))."
+    )
+    RelayLogger.info(
+      "Location manager settings: pausesAutomatically=\(locationManager.pausesLocationUpdatesAutomatically), distanceFilter=\(locationManager.distanceFilter), allowsBackgroundUpdates=\(locationManager.allowsBackgroundLocationUpdates)."
+    )
   }
 
   func stop() {
     stateQueue.sync {
       running = false
-      lastDeliveryTimestamp = 0
+      latestLocation = nil
+      hasDeliveredInitial = false
     }
 
-    DispatchQueue.main.async {
+    ConfigStore.setWasRunning(false)
+    stopDeliveryTimer()
+
+    runOnMain {
       self.locationManager.stopUpdatingLocation()
+      self.locationManager.stopMonitoringSignificantLocationChanges()
     }
 
     RelayLogger.info("Location relay stopped.")
@@ -80,35 +130,139 @@ final class LocationRelayEngine: NSObject, CLLocationManagerDelegate {
     stateQueue.sync { running }
   }
 
+  /// Resumes tracking after the app has been relaunched by the system (for
+  /// example, following a significant-location-change event) without any
+  /// JavaScript having run yet.
+  @objc func resumeIfNeeded() {
+    guard !isRunning() else {
+      return
+    }
+
+    guard ConfigStore.wasRunning() else {
+      return
+    }
+
+    loadPersistedConfigIfNeeded()
+
+    guard stateQueue.sync(execute: { config }) != nil else {
+      ConfigStore.setWasRunning(false)
+      return
+    }
+
+    guard Self.hasAlwaysPermission(for: locationManager) else {
+      return
+    }
+
+    RelayLogger.info("Relaunched by the system — resuming location relay.")
+    try? start()
+  }
+
+  func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    RelayLogger.info(
+      "Location authorization changed: \(Self.describeAuthorizationStatus(manager.authorizationStatus))."
+    )
+
+    runOnMain {
+      if Self.hasAlwaysPermission(for: manager) {
+        manager.allowsBackgroundLocationUpdates = true
+      } else {
+        manager.allowsBackgroundLocationUpdates = false
+      }
+    }
+
+    guard isRunning(), hasLocationPermission() else {
+      return
+    }
+
+    runOnMain {
+      manager.startUpdatingLocation()
+      if Self.hasAlwaysPermission(for: manager) {
+        manager.startMonitoringSignificantLocationChanges()
+      }
+    }
+  }
+
   func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
     guard let location = locations.last else {
+      RelayLogger.info("Skipping delivery: location update did not contain coordinates.")
       return
     }
 
-    let shouldDeliver = stateQueue.sync { () -> (Bool, BackgroundLocationRelayConfig?) in
-      guard running, let currentConfig = config else {
-        return (false, nil)
-      }
+    RelayLogger.info(
+      String(
+        format: "Location update received (%.6f, %.6f, accuracy %.1f m).",
+        location.coordinate.latitude,
+        location.coordinate.longitude,
+        location.horizontalAccuracy
+      )
+    )
 
-      let intervalMs = currentConfig.location.interval
-      let now = Date().timeIntervalSince1970 * 1000
-      if lastDeliveryTimestamp > 0, now - lastDeliveryTimestamp < intervalMs {
-        return (false, nil)
+    let shouldDeliverInitial = stateQueue.sync { () -> Bool in
+      latestLocation = location
+      guard running else {
+        return false
       }
-
-      lastDeliveryTimestamp = now
-      return (true, currentConfig)
+      if !hasDeliveredInitial {
+        hasDeliveredInitial = true
+        return true
+      }
+      return false
     }
 
-    guard shouldDeliver.0, let currentConfig = shouldDeliver.1 else {
-      return
+    // Deliver the very first fix immediately so consumers do not have to wait a
+    // full interval for the initial location; the timer drives every delivery
+    // afterwards, including while the device is stationary.
+    if shouldDeliverInitial {
+      deliverLatest()
     }
-
-    deliver(location: location, config: currentConfig)
   }
 
   func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
     RelayLogger.error("Location manager failed: \(error.localizedDescription)")
+  }
+
+  private func startDeliveryTimer() {
+    guard let currentConfig = stateQueue.sync(execute: { config }) else {
+      return
+    }
+
+    let intervalMs = max(currentConfig.location.interval, Self.minIntervalMs)
+    let interval = intervalMs / 1000
+
+    stopDeliveryTimer()
+
+    let timer = DispatchSource.makeTimerSource(queue: deliveryQueue)
+    timer.schedule(deadline: .now() + interval, repeating: interval)
+    timer.setEventHandler { [weak self] in
+      guard let self = self, self.isRunning() else {
+        return
+      }
+      self.deliverLatest()
+    }
+    deliveryTimer = timer
+    timer.resume()
+  }
+
+  private func stopDeliveryTimer() {
+    deliveryTimer?.cancel()
+    deliveryTimer = nil
+  }
+
+  private func deliverLatest() {
+    let snapshot = stateQueue.sync { () -> (CLLocation?, BackgroundLocationRelayConfig?) in
+      (latestLocation, config)
+    }
+
+    guard let currentConfig = snapshot.1 else {
+      return
+    }
+
+    guard let location = snapshot.0 else {
+      RelayLogger.info("Skipping delivery: no location fix yet.")
+      return
+    }
+
+    deliver(location: location, config: currentConfig)
   }
 
   private func deliver(location: CLLocation, config: BackgroundLocationRelayConfig) {
@@ -127,7 +281,7 @@ final class LocationRelayEngine: NSObject, CLLocationManagerDelegate {
         )
 
         if result.success {
-          RelayLogger.debug(
+          RelayLogger.info(
             "Delivered location update (status \(result.statusCode ?? 0))."
           )
         } else {
@@ -142,24 +296,19 @@ final class LocationRelayEngine: NSObject, CLLocationManagerDelegate {
   }
 
   private func applyLocationSettings(_ locationConfig: LocationConfig) {
-    DispatchQueue.main.async {
-      self.locationManager.desiredAccuracy = Self.desiredAccuracy(for: locationConfig.accuracy)
-      self.locationManager.distanceFilter = locationConfig.distanceFilter ?? kCLDistanceFilterNone
+    locationManager.desiredAccuracy = Self.desiredAccuracy(for: locationConfig.accuracy)
+    locationManager.distanceFilter = locationConfig.distanceFilter ?? kCLDistanceFilterNone
+    locationManager.pausesLocationUpdatesAutomatically =
+      locationConfig.pausesLocationUpdatesAutomatically ?? false
 
-      if let pauses = locationConfig.pausesLocationUpdatesAutomatically {
-        self.locationManager.pausesLocationUpdatesAutomatically = pauses
-      }
-
-      if #available(iOS 11.0, *) {
-        if let showsIndicator = locationConfig.showsBackgroundLocationIndicator {
-          self.locationManager.showsBackgroundLocationIndicator = showsIndicator
-        }
-      }
-
-      if Self.hasAlwaysPermission() {
-        self.locationManager.allowsBackgroundLocationUpdates = true
+    if #available(iOS 11.0, *) {
+      if let showsIndicator = locationConfig.showsBackgroundLocationIndicator {
+        locationManager.showsBackgroundLocationIndicator = showsIndicator
       }
     }
+
+    locationManager.allowsBackgroundLocationUpdates =
+      Self.hasAlwaysPermission(for: locationManager)
   }
 
   private func hasLocationPermission() -> Bool {
@@ -171,8 +320,25 @@ final class LocationRelayEngine: NSObject, CLLocationManagerDelegate {
     }
   }
 
-  private static func hasAlwaysPermission() -> Bool {
-    CLLocationManager.authorizationStatus() == .authorizedAlways
+  private static func hasAlwaysPermission(for manager: CLLocationManager) -> Bool {
+    manager.authorizationStatus == .authorizedAlways
+  }
+
+  private static func describeAuthorizationStatus(_ status: CLAuthorizationStatus) -> String {
+    switch status {
+    case .notDetermined:
+      return "notDetermined"
+    case .restricted:
+      return "restricted"
+    case .denied:
+      return "denied"
+    case .authorizedAlways:
+      return "authorizedAlways"
+    case .authorizedWhenInUse:
+      return "authorizedWhenInUse"
+    @unknown default:
+      return "unknown"
+    }
   }
 
   private static func desiredAccuracy(for accuracy: LocationAccuracy?) -> CLLocationAccuracy {
@@ -189,6 +355,31 @@ final class LocationRelayEngine: NSObject, CLLocationManagerDelegate {
       return kCLLocationAccuracyBest
     case .none:
       return kCLLocationAccuracyBest
+    }
+  }
+
+  private func runOnMain(_ block: @escaping () -> Void) {
+    if Thread.isMainThread {
+      block()
+    } else {
+      DispatchQueue.main.async(execute: block)
+    }
+  }
+
+  private func runOnMainSync(_ block: () -> Void) {
+    if Thread.isMainThread {
+      block()
+    } else {
+      DispatchQueue.main.sync(execute: block)
+    }
+  }
+}
+
+@objc(RelayLaunchResumer)
+final class RelayLaunchResumer: NSObject {
+  @objc static func resume() {
+    DispatchQueue.main.async {
+      LocationRelayEngine.shared.resumeIfNeeded()
     }
   }
 }

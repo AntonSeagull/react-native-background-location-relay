@@ -26,20 +26,21 @@ object AndroidBatteryOptimization {
       return true
     }
 
-    return try {
-      val intent =
-        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-          data = Uri.parse("package:${context.packageName}")
-        }
-      ActivityIntents.start(context, intent)
-      false
-    } catch (error: Exception) {
-      RelayLogger.error(
-        "Failed to request battery optimization exemption: ${error.message}",
-      )
-      openSettings(context)
-      false
+    val intent =
+      Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        data = Uri.parse("package:${context.packageName}")
+      }
+
+    if (ActivityIntents.start(context, intent)) {
+      // System dialog opened — exemption not granted yet.
+      return false
     }
+
+    RelayLogger.error(
+      "Battery optimization exemption dialog is unavailable — opening settings instead.",
+    )
+    openSettings(context)
+    return false
   }
 
   fun openSettings(context: Context) {

@@ -24,13 +24,11 @@ export function nativeIsRunning(): Promise<boolean> {
   unsupported();
 }
 
-export function nativeGetAndroidSetupStatus(): Promise<
-  import('./types').AndroidSetupStatus
-> {
+export function nativeCheckBatteryOptimization(): Promise<boolean> {
   unsupported();
 }
 
-export function nativeRequestIgnoreBatteryOptimizations(): Promise<boolean> {
+export function nativeRequestBatteryOptimization(): Promise<boolean> {
   unsupported();
 }
 
@@ -38,6 +36,10 @@ export function nativeOpenBatteryOptimizationSettings(): Promise<void> {
   unsupported();
 }
 
-export function nativeOpenManufacturerSettings(): Promise<boolean> {
+export function nativeEnableAutostartSettings(): Promise<boolean> {
+  unsupported();
+}
+
+export function nativeOpenAutostartSettings(): Promise<boolean> {
   unsupported();
 }

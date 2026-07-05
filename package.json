@@ -1,6 +1,6 @@
 {
   "name": "react-native-background-location-relay",
-  "version": "0.1.2",
+  "version": "0.1.8",
   "description": "React Native library for background location tracking and sending location data to a configurable HTTP endpoint.",
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/src/index.d.ts",

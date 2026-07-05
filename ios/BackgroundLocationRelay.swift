@@ -26,20 +26,14 @@ class BackgroundLocationRelay: HybridBackgroundLocationRelaySpec {
     }
   }
 
-  func getAndroidSetupStatus() throws -> Promise<AndroidSetupStatus> {
+  func checkBatteryOptimization() throws -> Promise<Bool> {
     return Promise.async {
-      AndroidSetupStatus(
-        location: true,
-        backgroundLocation: true,
-        notifications: true,
-        batteryOptimizationIgnored: true,
-        manufacturer: nil,
-        manufacturerSettingsAvailable: false
-      )
+      // Battery optimization is an Android-only concept.
+      true
     }
   }
 
-  func requestIgnoreBatteryOptimizations() throws -> Promise<Bool> {
+  func requestBatteryOptimization() throws -> Promise<Bool> {
     return Promise.async {
       true
     }
@@ -51,7 +45,13 @@ class BackgroundLocationRelay: HybridBackgroundLocationRelaySpec {
     }
   }
 
-  func openManufacturerSettings() throws -> Promise<Bool> {
+  func enableAutostartSettings() throws -> Promise<Bool> {
+    return Promise.async {
+      false
+    }
+  }
+
+  func openAutostartSettings() throws -> Promise<Bool> {
     return Promise.async {
       false
     }

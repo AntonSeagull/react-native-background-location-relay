@@ -9,8 +9,14 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 object LocationRelayEngine {
+  private const val MIN_INTERVAL_MS = 1_000L
+
   @Volatile
   private var config: BackgroundLocationRelayConfig? = null
 
@@ -18,14 +24,21 @@ object LocationRelayEngine {
   private var running = false
 
   @Volatile
-  private var lastDeliveryTimestamp = 0L
+  private var latestLocation: Location? = null
+
+  @Volatile
+  private var hasDeliveredInitial = false
 
   private var locationCallback: LocationCallback? = null
+  private var deliveryScheduler: ScheduledExecutorService? = null
+  private var deliveryTask: ScheduledFuture<*>? = null
 
   fun setConfig(context: Context, newConfig: BackgroundLocationRelayConfig) {
     config = newConfig
     ConfigStore.save(context.applicationContext, newConfig)
+    RelayLogger.info(ConfigLogger.format(newConfig))
     if (running) {
+      RelayLogger.info("Relay is running — applying new configuration.")
       restartLocationUpdates(context.applicationContext)
     }
   }
@@ -47,7 +60,9 @@ object LocationRelayEngine {
       config ?: throw RelayException("BackgroundLocationRelay is not configured. Call initialize() first.")
 
     if (!AndroidPermissions.hasLocationPermission(context)) {
-      throw RelayException("Location permission has not been granted.")
+      throw RelayException(
+        "Location permission (ACCESS_FINE_LOCATION/ACCESS_COARSE_LOCATION) has not been granted. Request it via react-native-permissions before start().",
+      )
     }
 
     running = true
@@ -57,7 +72,8 @@ object LocationRelayEngine {
 
   fun stop(context: Context) {
     running = false
-    lastDeliveryTimestamp = 0L
+    latestLocation = null
+    hasDeliveredInitial = false
     stopLocationUpdates(context.applicationContext)
     RelayLogger.info("Location relay stopped.")
   }
@@ -85,15 +101,18 @@ object LocationRelayEngine {
       object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
           val location = result.lastLocation ?: return
-          handleLocationUpdate(currentConfig, location)
+          onLocationReceived(location)
         }
       }
 
     locationCallback = callback
     client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    startDeliveryTimer(currentConfig)
   }
 
   fun stopLocationUpdates(context: Context) {
+    stopDeliveryTimer()
+
     val callback = locationCallback ?: return
     LocationServices.getFusedLocationProviderClient(context).removeLocationUpdates(callback)
     locationCallback = null
@@ -107,21 +126,61 @@ object LocationRelayEngine {
     startLocationUpdates(context, currentConfig)
   }
 
-  private fun handleLocationUpdate(
-    currentConfig: BackgroundLocationRelayConfig,
-    location: Location,
-  ) {
+  private fun onLocationReceived(location: Location) {
+    latestLocation = location
+
     if (!running) {
       return
     }
 
-    val intervalMs = currentConfig.location.interval.toLong()
-    val now = System.currentTimeMillis()
-    if (lastDeliveryTimestamp > 0L && now - lastDeliveryTimestamp < intervalMs) {
-      return
+    // Deliver the very first fix immediately so consumers do not have to wait a
+    // full interval for the initial location; the timer drives every delivery
+    // afterwards, including while the device is stationary.
+    if (!hasDeliveredInitial) {
+      hasDeliveredInitial = true
+      deliverLatest()
     }
+  }
 
-    lastDeliveryTimestamp = now
+  private fun startDeliveryTimer(currentConfig: BackgroundLocationRelayConfig) {
+    stopDeliveryTimer()
+
+    val intervalMs = currentConfig.location.interval.toLong().coerceAtLeast(MIN_INTERVAL_MS)
+    val scheduler = Executors.newSingleThreadScheduledExecutor()
+    deliveryScheduler = scheduler
+    deliveryTask =
+      scheduler.scheduleWithFixedDelay(
+        {
+          try {
+            if (running) {
+              deliverLatest()
+            }
+          } catch (error: Exception) {
+            RelayLogger.error("Delivery timer error: ${error.message}")
+          }
+        },
+        intervalMs,
+        intervalMs,
+        TimeUnit.MILLISECONDS,
+      )
+  }
+
+  private fun stopDeliveryTimer() {
+    deliveryTask?.cancel(false)
+    deliveryTask = null
+    deliveryScheduler?.shutdownNow()
+    deliveryScheduler = null
+  }
+
+  private fun deliverLatest() {
+    val currentConfig = config ?: return
+    val location =
+      latestLocation
+        ?: run {
+          RelayLogger.debug("Skipping delivery: no location fix yet")
+          return
+        }
+
     deliver(currentConfig, location)
   }
 

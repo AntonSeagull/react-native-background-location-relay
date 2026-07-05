@@ -1,10 +1,7 @@
 import { NitroModules } from 'react-native-nitro-modules';
 import type { BackgroundLocationRelayConfig as NitroConfig } from './BackgroundLocationRelay.nitro';
 import type { BackgroundLocationRelay } from './BackgroundLocationRelay.nitro';
-import type {
-  AndroidSetupStatus,
-  BackgroundLocationRelayConfig,
-} from './types';
+import type { BackgroundLocationRelayConfig } from './types';
 
 const hybridObject = NitroModules.createHybridObject<BackgroundLocationRelay>(
   'BackgroundLocationRelay'
@@ -51,18 +48,22 @@ export function nativeIsRunning(): Promise<boolean> {
   return hybridObject.isRunning();
 }
 
-export function nativeGetAndroidSetupStatus(): Promise<AndroidSetupStatus> {
-  return hybridObject.getAndroidSetupStatus();
+export function nativeCheckBatteryOptimization(): Promise<boolean> {
+  return hybridObject.checkBatteryOptimization();
 }
 
-export function nativeRequestIgnoreBatteryOptimizations(): Promise<boolean> {
-  return hybridObject.requestIgnoreBatteryOptimizations();
+export function nativeRequestBatteryOptimization(): Promise<boolean> {
+  return hybridObject.requestBatteryOptimization();
 }
 
 export function nativeOpenBatteryOptimizationSettings(): Promise<void> {
   return hybridObject.openBatteryOptimizationSettings();
 }
 
-export function nativeOpenManufacturerSettings(): Promise<boolean> {
-  return hybridObject.openManufacturerSettings();
+export function nativeEnableAutostartSettings(): Promise<boolean> {
+  return hybridObject.enableAutostartSettings();
+}
+
+export function nativeOpenAutostartSettings(): Promise<boolean> {
+  return hybridObject.openAutostartSettings();
 }
