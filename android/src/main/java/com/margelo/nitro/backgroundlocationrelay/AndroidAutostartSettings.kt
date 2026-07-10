@@ -1,9 +1,15 @@
 package com.margelo.nitro.backgroundlocationrelay
 
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.view.ContextThemeWrapper
 import java.util.Locale
 
 object AndroidAutostartSettings {
@@ -13,22 +19,35 @@ object AndroidAutostartSettings {
     if (vendorIntents.isEmpty()) {
       return false
     }
-    return resolveIntent(context, vendorIntents) != null
+    val packageManager = context.packageManager
+    return vendorIntents.any { it.resolveActivity(packageManager) != null }
   }
 
   fun openSettings(context: Context): Boolean {
-    val intent = resolveIntent(context, getVendorIntents(context)) ?: return false
-    return ActivityIntents.start(context, intent)
+    for (intent in getVendorIntents(context)) {
+      if (ActivityIntents.start(context, Intent(intent))) {
+        return true
+      }
+      RelayLogger.debug("Autostart intent did not open: $intent")
+    }
+    showUnavailableDialog(context)
+    return false
   }
 
-  private fun resolveIntent(context: Context, intents: List<Intent>): Intent? {
-    val packageManager = context.packageManager
-    for (intent in intents) {
-      if (intent.resolveActivity(packageManager) != null) {
-        return intent
+  private fun showUnavailableDialog(context: Context) {
+    val appContext = context.applicationContext
+    Handler(Looper.getMainLooper()).post {
+      try {
+        val themedContext =
+          ContextThemeWrapper(appContext, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+        AlertDialog.Builder(themedContext)
+          .setMessage(appContext.getString(R.string.autostart_unavailable_message))
+          .setPositiveButton(android.R.string.ok, null)
+          .show()
+      } catch (error: Exception) {
+        RelayLogger.error("Failed to show autostart unavailable dialog: ${error.message}")
       }
     }
-    return null
   }
 
   private fun getVendorIntents(context: Context): List<Intent> {
@@ -41,7 +60,7 @@ object AndroidAutostartSettings {
         xiaomiIntents(packageName)
       manufacturer in HUAWEI_MANUFACTURERS || brand in HUAWEI_MANUFACTURERS ->
         huaweiIntents()
-      manufacturer == "samsung" -> samsungIntents()
+      manufacturer == "samsung" -> samsungIntents(packageName)
       manufacturer in OPPO_MANUFACTURERS || brand in OPPO_MANUFACTURERS ->
         oppoIntents()
       manufacturer in VIVO_MANUFACTURERS || brand in VIVO_MANUFACTURERS ->
@@ -102,8 +121,16 @@ object AndroidAutostartSettings {
     )
   }
 
-  private fun samsungIntents(): List<Intent> {
+  private fun samsungIntents(appPackageName: String): List<Intent> {
     return listOf(
+      Intent(SAMSUNG_ACTION_OPEN_CHECKABLE_LIST).apply {
+        setPackage("com.samsung.android.lool")
+        putExtra(SAMSUNG_ACTIVITY_TYPE_EXTRA, SAMSUNG_NEVER_SLEEPING_APPS)
+      },
+      componentIntent(
+        "com.samsung.android.lool",
+        "com.samsung.android.sm.battery.ui.BatteryActivity",
+      ),
       componentIntent(
         "com.samsung.android.lool",
         "com.samsung.android.sm.ui.battery.BatteryActivity",
@@ -116,6 +143,9 @@ object AndroidAutostartSettings {
         "com.samsung.android.sm",
         "com.samsung.android.sm.battery.ui.usage.CheckableAppListActivity",
       ),
+      Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.fromParts("package", appPackageName, null)
+      },
     )
   }
 
@@ -205,6 +235,11 @@ object AndroidAutostartSettings {
       ),
     )
   }
+
+  private const val SAMSUNG_ACTION_OPEN_CHECKABLE_LIST =
+    "com.samsung.android.sm.ACTION_OPEN_CHECKABLE_LISTACTIVITY"
+  private const val SAMSUNG_ACTIVITY_TYPE_EXTRA = "activity_type"
+  private const val SAMSUNG_NEVER_SLEEPING_APPS = 2
 
   private val XIAOMI_MANUFACTURERS = setOf("xiaomi", "redmi", "poco")
   private val HUAWEI_MANUFACTURERS = setOf("huawei", "honor")

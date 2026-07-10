@@ -218,13 +218,7 @@ export default function App() {
 
   const handleAutostartSettings = async () => {
     try {
-      const opened = await BackgroundLocationRelay.openAutostartSettings();
-      if (!opened) {
-        Alert.alert(
-          'Autostart settings',
-          'No vendor autostart screen is available on this device.'
-        );
-      }
+      await BackgroundLocationRelay.openAutostartSettings();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Open failed.';
       Alert.alert('Autostart settings', message);

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="autostart_unavailable_message">К сожалению, на вашем устройстве эта настройка недоступна. Вы можете продолжить без неё.</string>
+</resources>

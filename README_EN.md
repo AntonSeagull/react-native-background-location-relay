@@ -106,10 +106,10 @@ Recommended before `start()`. You can re-check with `checkBatteryOptimization()`
 
 #### Autostart (Android, optional)
 
-Some OEM firmware (Xiaomi, Huawei, Oppo, Vivo, Samsung, etc.) has a separate **autostart** screen. The library **cannot verify** whether the user enabled autostart — it can only open the screen when one exists on the device. Tracking may work without it, but background reliability improves on aggressive OEM devices when the user enables autostart manually. Add this step **at your discretion**.
+Some OEM firmware (Xiaomi, Huawei, Oppo, Vivo, etc.) has a separate **autostart** screen. Samsung does not — instead it uses **Battery → Background usage limits → Never sleeping apps** or **Apps → [app] → Battery → Unrestricted**. The library **cannot verify** whether the user enabled the setting — it can only open a relevant screen when one exists on the device. Tracking may work without it, but background reliability improves on aggressive OEM devices when the user configures this manually. Add this step **at your discretion**.
 
-- `enableAutostartSettings()` returns `true` if a vendor autostart screen exists and can be opened. Returns `false` on stock Android (Pixel, etc.).
-- `openAutostartSettings()` opens the vendor autostart screen. Returns `true` if a screen was found and opened.
+- `enableAutostartSettings()` returns `true` if at least one supported vendor screen exists on the device. Returns `false` on stock Android (Pixel, etc.).
+- `openAutostartSettings()` tries a fallback chain for the current manufacturer and opens the first screen that succeeds. Returns `true` if a screen was actually opened. If every option fails, shows a native OK dialog (Russian or English based on the device language).
 
 ## Requesting permissions (react-native-permissions)
 
@@ -268,13 +268,13 @@ await BackgroundLocationRelay.start();
 
 #### Autostart (optional, at your discretion)
 
-Xiaomi, Huawei, Oppo, Vivo, and other OEMs may have an autostart screen that **cannot be verified programmatically** — only opened when available. Tracking works without this step, but background reliability improves on those devices when the user enables autostart manually. Add to your app if you want:
+Xiaomi, Huawei, Oppo, Vivo, and other OEMs may have an autostart screen that **cannot be verified programmatically** — only opened when available. On Samsung (including Galaxy S24), the library opens the **Never sleeping apps** screen (official Samsung deeplink) or, if unavailable, the app's battery settings. Tracking works without this step, but background reliability improves on those devices when the user configures this manually. Add to your app if you want:
 
 ```js
 // Optional — only when a vendor autostart screen exists on this device
 if (await BackgroundLocationRelay.enableAutostartSettings()) {
   await BackgroundLocationRelay.openAutostartSettings();
-  // Ask the user in your UI whether they enabled autostart — cannot be verified
+  // Ask the user in your UI whether they enabled the setting — cannot be verified
 }
 ```
 

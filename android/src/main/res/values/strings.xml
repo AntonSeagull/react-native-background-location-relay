@@ -3,4 +3,5 @@
     <string name="location_relay_notification_title">Location tracking active</string>
     <string name="location_relay_notification_body">Sending location updates in the background</string>
     <string name="location_relay_notification_channel_name">Background location</string>
+    <string name="autostart_unavailable_message">Unfortunately, this setting is not available on your device. You can continue without it.</string>
 </resources>
